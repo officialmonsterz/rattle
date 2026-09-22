@@ -9,6 +9,11 @@
             <div class="card-header">
                 <i class="fas fa-key"></i> Captured Tokens
                 <span class="badge bg-primary float-end">{{ tokens|length }} Total</span>
+                <form method="POST" action="{{ url_for('check_all_tokens_now') }}" class="float-end me-2">
+                    <button type="submit" class="btn btn-sm btn-outline-success">
+                        <i class="fas fa-heart-pulse"></i> Run liveness check now
+                    </button>
+                </form>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
@@ -19,7 +24,8 @@
                                 <th>Email</th>
                                 <th>Campaign</th>
                                 <th>Captured</th>
-                                <th>Status</th>
+                                <th>Liveness</th>
+                                <th>Last Checked</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
@@ -36,14 +42,17 @@
                                     {% endif %}
                                 </td>
                                 <td>{{ token.campaign.name if token.campaign else 'N/A' }}</td>
-                                <td>{{ token.captured_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                                <td>{{ token.captured_at.strftime('%Y-%m-%d %H:%M') if token.captured_at }}</td>
                                 <td>
-                                    {% if token.is_active %}
-                                        <span class="badge bg-success">Active</span>
+                                    {% if token.status == 'valid' %}
+                                        <span class="badge bg-success">valid</span>
+                                    {% elif token.status == 'dead' %}
+                                        <span class="badge bg-danger">dead</span>
                                     {% else %}
-                                        <span class="badge bg-danger">Revoked</span>
+                                        <span class="badge bg-warning">unknown</span>
                                     {% endif %}
                                 </td>
+                                <td>{{ token.last_checked.strftime('%Y-%m-%d %H:%M') if token.last_checked else 'never' }}</td>
                                 <td>
                                     <button class="btn btn-sm btn-outline-primary" onclick="viewToken({{ token.id }})">
                                         <i class="fas fa-eye"></i>
@@ -56,11 +65,17 @@
                                     <button class="btn btn-sm btn-outline-secondary" onclick="copyTokenText({{ token.id }})">
                                         <i class="fas fa-copy"></i>
                                     </button>
+                                    <form method="POST" action="{{ url_for('delete_token', token_id=token.id) }}" style="display:inline;"
+                                          onsubmit="return confirm('Delete this token?');">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </form>
                                 </td>
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="6" class="text-center text-muted">No tokens captured yet</td>
+                                <td colspan="7" class="text-center text-muted">No tokens captured yet</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -114,7 +129,7 @@ function viewToken(id) {
             <p class="mt-2">Loading token data...</p>
         </div>
     `;
-    
+
     fetch(`/api/token/${id}`)
         .then(r => {
             if (!r.ok) throw new Error('Failed to load');
@@ -131,9 +146,10 @@ function viewToken(id) {
                         <tr><td><strong>Name</strong></td><td>${data.name || 'Unknown'}</td></tr>
                         <tr><td><strong>Token Type</strong></td><td>${data.token_type || 'N/A'}</td></tr>
                         <tr><td><strong>Expires In</strong></td><td>${data.expires_in || 'N/A'} seconds</td></tr>
+                        <tr><td><strong>Liveness</strong></td><td>${data.status || 'unknown'}</td></tr>
                         <tr><td><strong>Scope</strong></td><td><code>${data.scope || 'N/A'}</code></td></tr>
                         <tr><td><strong>Captured At</strong></td><td>${data.captured_at || 'N/A'}</td></tr>
-                        <tr><td><strong>Active</strong></td><td>${data.is_active ? '✅ Yes' : '❌ No'}</td></tr>
+                        <tr><td><strong>Active</strong></td><td>${data.is_active ? 'Yes' : 'No'}</td></tr>
                     </table>
                 </div>
                 <div class="mb-3">
@@ -159,8 +175,7 @@ function viewToken(id) {
                     <pre style="background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px; overflow: auto; max-height: 300px; font-size: 12px; line-height: 1.6;">${JSON.stringify(data, null, 2)}</pre>
                 </div>
             `;
-            
-            // Show modal
+
             const modal = new bootstrap.Modal(document.getElementById('tokenModal'));
             modal.show();
         })
@@ -175,8 +190,7 @@ function viewToken(id) {
 
 function copyModalToken() {
     if (currentTokenData) {
-        const json = JSON.stringify(currentTokenData, null, 2);
-        copyToClipboard(json);
+        copyToClipboard(JSON.stringify(currentTokenData, null, 2));
     }
 }
 
@@ -192,16 +206,10 @@ function copyToClipboard(text) {
         alert('Nothing to copy!');
         return;
     }
-    
-    // Try clipboard API first
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text)
-            .then(() => {
-                showToast('✅ Copied to clipboard!', 'success');
-            })
-            .catch(() => {
-                fallbackCopy(text);
-            });
+            .then(() => showToast('Copied to clipboard!', 'success'))
+            .catch(() => fallbackCopy(text));
     } else {
         fallbackCopy(text);
     }
@@ -217,9 +225,9 @@ function fallbackCopy(text) {
     textarea.select();
     try {
         document.execCommand('copy');
-        showToast('✅ Copied to clipboard!', 'success');
+        showToast('Copied to clipboard!', 'success');
     } catch (e) {
-        showToast('❌ Copy failed. Please copy manually.', 'error');
+        showToast('Copy failed. Please copy manually.', 'error');
     }
     document.body.removeChild(textarea);
 }
@@ -228,8 +236,7 @@ function copyTokenText(id) {
     fetch(`/api/token/${id}`)
         .then(r => r.json())
         .then(data => {
-            const json = JSON.stringify(data, null, 2);
-            copyToClipboard(json);
+            copyToClipboard(JSON.stringify(data, null, 2));
         })
         .catch(() => {
             alert('Failed to load token for copying');
@@ -237,36 +244,36 @@ function copyTokenText(id) {
 }
 
 function refreshToken(id) {
-    if (!confirm('Refresh this token?')) return;
-    
+    if (!confirm('Refresh this token against Google now?')) return;
+
     showToast('Refreshing token...', 'info');
-    
+
     fetch(`/token/${id}/refresh`, { method: 'POST' })
         .then(r => r.json())
         .then(data => {
             if (data.success) {
-                showToast('✅ Token refreshed successfully!', 'success');
+                showToast('Token refreshed successfully!', 'success');
                 setTimeout(() => location.reload(), 1500);
             } else {
-                showToast('❌ Refresh failed: ' + (data.error || 'Unknown error'), 'error');
+                showToast('Refresh failed: ' + (data.error || 'Unknown error'), 'error');
             }
         })
         .catch(() => {
-            showToast('❌ Refresh failed', 'error');
+            showToast('Refresh failed', 'error');
         });
 }
 
 function showToast(message, type = 'info') {
     const existing = document.getElementById('rattle-toast');
     if (existing) existing.remove();
-    
+
     const colors = {
         success: '#34a853',
         error: '#ea4335',
         warning: '#fbbc04',
         info: '#1a73e8'
     };
-    
+
     const toast = document.createElement('div');
     toast.id = 'rattle-toast';
     toast.style.cssText = `
@@ -286,7 +293,7 @@ function showToast(message, type = 'info') {
     `;
     toast.textContent = message;
     document.body.appendChild(toast);
-    
+
     setTimeout(() => {
         if (toast.parentNode) toast.remove();
     }, 3000);
