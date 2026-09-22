@@ -1,0 +1,20 @@
+services:
+  rattle:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - rattle-data:/app/instance
+      - ./config.py:/app/config.py:ro
+    environment:
+      # Optional overrides - config.py values are used if these are unset.
+      # TELEGRAM_BOT_TOKEN: "123456:ABC-your-bot-token"
+      # TELEGRAM_CHAT_ID: "123456789"
+      # RATTLE_SECRET_KEY: "paste-output-of-secrets-token-hex-32"
+      # RATTLE_INITIAL_PASSWORD: ""
+      # TOKEN_CHECK_INTERVAL_MINUTES: "30"
+      TZ: "UTC"
+    restart: unless-stopped
+
+volumes:
+  rattle-data:
