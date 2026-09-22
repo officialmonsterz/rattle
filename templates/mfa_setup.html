@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}MFA Setup{% endblock %}
+
+{% block content %}
+<div class="row mt-4">
+    <div class="col-md-6 mx-auto">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-shield-halved"></i> Two-Factor Authentication (TOTP)
+            </div>
+            <div class="card-body">
+                {% if current_user_totp_enabled %}
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle"></i> MFA is currently <strong>enabled</strong> on your account.
+                </div>
+                <form method="POST" action="{{ url_for('mfa_disable') }}">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="fas fa-times"></i> Disable MFA
+                    </button>
+                </form>
+                {% else %}
+                <p>Scan this QR code with Google Authenticator, Aegis, 1Password, or any TOTP app, then enter the 6-digit code to enable MFA.</p>
+                <div class="text-center mb-3">
+                    <img src="data:image/png;base64,{{ qr_b64 }}" alt="TOTP QR code" width="200">
+                </div>
+                <p class="small text-muted" style="word-break: break-all;">
+                    Manual setup key (if you can't scan): <code>{{ otpauth_uri }}</code>
+                </p>
+                <form method="POST" action="{{ url_for('mfa_setup') }}">
+                    <div class="mb-3">
+                        <label for="code" class="form-label">6-digit code</label>
+                        <input type="text" class="form-control" id="code" name="code"
+                               inputmode="numeric" pattern="[0-9]*" maxlength="6" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-check"></i> Enable MFA
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
