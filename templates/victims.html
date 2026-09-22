@@ -16,8 +16,10 @@
                         <thead>
                             <tr>
                                 <th>ID</th>
+                                <th>Target</th>
                                 <th>Email</th>
                                 <th>Campaign</th>
+                                <th>Clicks</th>
                                 <th>IP Address</th>
                                 <th>First Seen</th>
                                 <th>Status</th>
@@ -27,10 +29,12 @@
                             {% for victim in victims %}
                             <tr>
                                 <td>{{ victim.id }}</td>
+                                <td>{{ victim.label or '-' }}</td>
                                 <td>{{ victim.email or 'Unknown' }}</td>
                                 <td>{{ victim.campaign.name if victim.campaign else 'N/A' }}</td>
+                                <td>{{ victim.clicks }}</td>
                                 <td>{{ victim.ip_address or 'N/A' }}</td>
-                                <td>{{ victim.first_seen.strftime('%Y-%m-%d %H:%M') }}</td>
+                                <td>{{ victim.first_seen.strftime('%Y-%m-%d %H:%M') if victim.first_seen }}</td>
                                 <td>
                                     {% if victim.status == 'authorized' %}
                                         <span class="badge bg-success">Authorized</span>
@@ -43,7 +47,7 @@
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="6" class="text-center text-muted">No victims yet</td>
+                                <td colspan="8" class="text-center text-muted">No victims yet</td>
                             </tr>
                             {% endfor %}
                         </tbody>
