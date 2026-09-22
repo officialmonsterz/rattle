@@ -22,15 +22,20 @@
                     <div class="mb-3">
                         <label for="client_id" class="form-label">Google Client ID *</label>
                         <input type="text" class="form-control" id="client_id" name="client_id" required>
-                        <small class="form-text text-muted">From Google Cloud Console > Credentials</small>
+                        <small class="form-text text-muted">From Google Cloud Console &gt; Credentials</small>
                     </div>
                     <div class="mb-3">
                         <label for="client_secret" class="form-label">Google Client Secret *</label>
                         <input type="password" class="form-control" id="client_secret" name="client_secret" required>
                     </div>
                     <div class="mb-3">
-                        <label for="redirect_uri" class="form-label">Redirect URI</label>
-                        <input type="url" class="form-control" id="redirect_uri" name="redirect_uri" value="http://localhost:8000/callback">
+                        <label for="redirect_uri" class="form-label">Redirect URI *</label>
+                        <input type="url" class="form-control" id="redirect_uri" name="redirect_uri"
+                               placeholder="https://your-domain.com/callback" required>
+                        <small class="form-text text-muted">
+                            Must exactly match a redirect URI registered in Google Cloud Console.
+                            Example: https://yourdomain.com/callback
+                        </small>
                     </div>
                     <div class="mb-3">
                         <label for="scopes" class="form-label">Scopes</label>
