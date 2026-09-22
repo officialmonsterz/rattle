@@ -42,12 +42,12 @@
                                 </td>
                                 <td>{{ campaign.victims|length }}</td>
                                 <td>{{ campaign.tokens|length }}</td>
-                                <td>{{ campaign.created_at.strftime('%Y-%m-%d') }}</td>
+                                <td>{{ campaign.created_at.strftime('%Y-%m-%d') if campaign.created_at }}</td>
                                 <td>
                                     <a href="{{ url_for('campaign_detail', campaign_id=campaign.id) }}" class="btn btn-sm btn-outline-primary">
                                         <i class="fas fa-eye"></i>
                                     </a>
-                                    <button class="btn btn-sm btn-outline-danger" onclick="deleteCampaign({{ campaign.id }})">
+                                    <button class="btn btn-sm btn-outline-danger" onclick="deleteCampaign({{ campaign.id }}, '{{ campaign.name }}')">
                                         <i class="fas fa-trash"></i>
                                     </button>
                                 </td>
@@ -64,4 +64,19 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function deleteCampaign(id, name) {
+    if (!confirm('Delete campaign "' + name + '" and all its victims/tokens?')) return;
+    fetch(`/campaign/${id}/delete`, { method: 'POST' })
+        .then(r => {
+            if (!r.ok) throw new Error('Delete failed');
+            return r.json();
+        })
+        .then(() => location.reload())
+        .catch(err => alert('Delete failed: ' + err.message));
+}
+</script>
 {% endblock %}
