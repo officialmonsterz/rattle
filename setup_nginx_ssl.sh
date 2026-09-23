@@ -1,11 +1,10 @@
 #!/bin/bash
 
 # ============================================
-#  Nginx + SSL Setup Script
-#  For Rattle or any Flask app
-#  Fixed: webroot fallback now works (nginx running),
-#         port is configurable, modern http2 syntax,
-#         HTTP-only fallback if SSL fails.
+#  Nginx + SSL Setup Script  (v3)
+#  Fixed: uses `listen 443 ssl http2;` syntax which works on nginx 1.18+
+#         (the `http2 on;` directive requires nginx 1.25+, Ubuntu 22.04
+#          ships 1.18, which caused: unknown directive "http2")
 # ============================================
 
 set -e
@@ -62,9 +61,10 @@ print_status "Installing Nginx, Certbot, and python3-certbot-nginx..."
 apt update -qq
 apt install -y -qq nginx certbot python3-certbot-nginx
 print_success "Nginx and Certbot installed"
+print_status "Nginx version: $(nginx -v 2>&1)"
 
 # ============================================
-# Configure Nginx (HTTP first; HTTPS block added after cert exists)
+# Configure Nginx (HTTP stage first)
 # ============================================
 
 print_status "Configuring Nginx (HTTP stage)..."
@@ -100,12 +100,13 @@ systemctl enable nginx
 print_success "Nginx running (HTTP stage)"
 
 # ============================================
-# Obtain SSL certificate (nginx running -> webroot works)
+# Obtain SSL certificate
 # ============================================
 
 print_status "Obtaining SSL certificate..."
 mkdir -p /var/www/html
 
+CERT_OK=0
 if certbot certonly --webroot -w /var/www/html -d "$DOMAIN" \
     --email "$EMAIL" --agree-tos --no-eff-email --non-interactive; then
     print_success "SSL certificate obtained"
@@ -113,8 +114,11 @@ if certbot certonly --webroot -w /var/www/html -d "$DOMAIN" \
 else
     print_error "Certificate failed. Check DNS and try again later."
     print_status "Leaving site on HTTP so it still works."
-    CERT_OK=0
 fi
+
+# ============================================
+# Upgrade to HTTPS (old-but-universal http2 syntax, works on 1.18+)
+# ============================================
 
 if [ "$CERT_OK" -eq 1 ]; then
     print_status "Upgrading Nginx to HTTPS..."
@@ -126,8 +130,7 @@ server {
 }
 
 server {
-    listen 443 ssl;
-    http2 on;
+    listen 443 ssl http2;
     server_name $DOMAIN;
 
     ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
@@ -150,9 +153,13 @@ server {
     error_log /var/log/nginx/rattle_error.log;
 }
 EOF
-    nginx -t
-    systemctl reload nginx
-    print_success "Nginx serving HTTPS"
+    if nginx -t; then
+        systemctl reload nginx
+        print_success "Nginx serving HTTPS"
+    else
+        print_error "nginx config test failed after HTTPS upgrade - check the error above"
+        exit 1
+    fi
 fi
 
 # ============================================
@@ -185,9 +192,8 @@ echo "  1. Update Google Cloud Console:"
 echo "     - JavaScript origins:  https://$DOMAIN"
 echo "     - Redirect URI:        https://$DOMAIN/callback"
 echo ""
-echo "  2. Run your Flask app:"
-echo "     cd $PROJECT_PATH"
-echo "     gunicorn -w 1 --threads 4 -b 127.0.0.1:$BACKEND_PORT app:app"
+echo "  2. Static files permissions (if styling is broken):"
+echo "     chmod 755 $PROJECT_PATH"
 echo ""
 echo "  SSL renews automatically via certbot.timer."
 echo "=========================================="
