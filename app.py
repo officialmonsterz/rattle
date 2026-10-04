@@ -266,7 +266,14 @@ def mfa_setup():
     buf = BytesIO()
     img.save(buf, format="PNG")
     qr_b64 = base64.b64encode(buf.getvalue()).decode()
-    return render_template("mfa_setup.html", qr_b64=qr_b64, uri=uri)
+    return render_template(
+        "mfa_setup.html",
+        qr_b64=qr_b64,
+        uri=uri,
+        otpauth_uri=uri,
+        current_user_totp_enabled=user.totp_enabled,
+    )
+
 
 
 @app.route("/mfa/disable", methods=["POST"])
