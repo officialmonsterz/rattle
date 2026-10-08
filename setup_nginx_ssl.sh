@@ -1,10 +1,15 @@
 #!/bin/bash
 
 # ============================================
-#  Nginx + SSL Setup Script  (v3)
-#  Fixed: uses `listen 443 ssl http2;` syntax which works on nginx 1.18+
-#         (the `http2 on;` directive requires nginx 1.25+, Ubuntu 22.04
-#          ships 1.18, which caused: unknown directive "http2")
+#  Nginx + SSL Setup Script  (v4)
+#  Fixed:
+#   - uses `listen 443 ssl http2;` syntax (works on nginx 1.18+,
+#     the `http2 on;` directive needs nginx 1.25+)
+#   - added /.well-known/acme-challenge/ location so certbot's
+#     webroot challenge actually works (previously every request was
+#     proxied to the backend, so the certificate could NEVER be issued,
+#     and the port-80 redirect in the HTTPS stage would have killed
+#     renewals too)
 # ============================================
 
 set -e
@@ -74,6 +79,12 @@ server {
     listen 80;
     server_name $DOMAIN;
 
+    # Let's Encrypt webroot challenge must be served by nginx itself,
+    # NOT proxied to the backend.
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:$BACKEND_PORT;
         proxy_set_header Host \$host;
@@ -126,7 +137,15 @@ if [ "$CERT_OK" -eq 1 ]; then
 server {
     listen 80;
     server_name $DOMAIN;
-    return 301 https://\$server_name\$request_uri;
+
+    # Renewal challenges keep working: serve them, do not redirect.
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://\$server_name\$request_uri;
+    }
 }
 
 server {
@@ -135,6 +154,11 @@ server {
 
     ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+
+    # Renewal challenges can also arrive over HTTPS after a redirect.
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:$BACKEND_PORT;
