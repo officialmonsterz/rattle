@@ -461,7 +461,10 @@ def main():
         if args.upload:
             info(f"uploading to {args.upload} ...")
             status, text = upload_zip(zip_path, args.upload, args.key, device_label, browser_results)
-            if status == 200 and '"success": true' in text.replace(" ", ""):
+            # BUG FIX: we strip ALL spaces from the response first, so the
+            # needle must ALSO be space-free ('"success":true'), otherwise
+            # a successful upload was always reported as failed.
+            if status == 200 and '"success":true' in text.replace(" ", "").lower():
                 ok(f"upload OK - server said: {text.strip()}")
             else:
                 fail(f"upload failed (HTTP {status}): {text.strip()}")
